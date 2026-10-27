@@ -39,7 +39,8 @@ public class Level {
 
     /** Odd levels are guarded by a Syntax Spider, even levels by a Null Pointer. */
     public Bug createBug() {
+        int campaignLevel = Math.max(1, id);
         if (boss) return new BossBug(id);
-        return (id % 2 == 1) ? new SyntaxSpider() : new NullPointer();
+        return (id % 2 == 1) ? new SyntaxSpider(campaignLevel) : new NullPointer(campaignLevel);
     }
 }

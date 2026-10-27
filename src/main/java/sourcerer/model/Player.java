@@ -25,8 +25,8 @@ public class Player {
         this.name = name;
         this.hp = maxHp;
         this.mp = maxMp;
-        potions.put(Potion.HEALING, 3);
-        potions.put(Potion.MANA, 2);
+        potions.put(Potion.HEALING, 0);
+        potions.put(Potion.MANA, 0);
     }
 
     // ---- read access ----
@@ -108,6 +108,11 @@ public class Player {
 
     public void drainMana(int amount) {
         mp = Math.max(0, mp - amount);
+    }
+
+    /** Reduces HP directly, bypassing armor for fixed costs and penalties. */
+    public void drainHp(int amount) {
+        hp = Math.max(0, hp - Math.max(0, amount));
     }
 
     public boolean spendMana(int cost) {

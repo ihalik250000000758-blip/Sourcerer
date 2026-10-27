@@ -4,7 +4,15 @@ package sourcerer.model;
 public class SyntaxSpider extends Bug {
 
     public SyntaxSpider() {
-        super("Syntax Spider", 40, 8, "spider");
+        this(1);
+    }
+
+    public SyntaxSpider(int campaignLevel) {
+        super("Syntax Spider", scaledHp(40, campaignLevel), 8, "spider");
+    }
+
+    private static int scaledHp(int baseHp, int campaignLevel) {
+        return baseHp + Math.max(0, campaignLevel - 1) * 25;
     }
 
     @Override

@@ -22,16 +22,15 @@ Existing functionality inspected and retained:
 ## Changes
 
 The original package and entry point are retained under standard Maven source
-directories. The original seven stages and tutorial content remain. The stage
-bank adds authored lessons through stage 100; every tenth stage has an additional
-boss challenge. The map pages ten nodes at a time so all stages fit the existing
-Swing layout.
+directories. The campaign has the seven lessons in `LevelBank`; the current
+source does not define boss campaign stages.
 
-Player progression now saves XP, character level, coins, potion quantities,
-stage stars, boss defeats, and tutorial completion. With no database URL, the
-existing properties save is used. With `SOURCERER_DB_URL`, JDBC uses the schema
-and save tables documented in `sql/` and `docs/database-setup.md`. Setup and
-reset SQL are never invoked by the game.
+Player progression saves XP, character level, coins, potion quantities, and
+campaign stars. Tutorial minigame stars are saved separately. The one-time
+introductory tutorial flag is transient. New saves start with zero potions.
+With no database URL, progress uses properties files; with
+`SOURCERER_DB_URL`, JDBC uses the schema documented in `sql/` and
+`docs/database-setup.md`. Setup and reset SQL are never invoked by the game.
 
 ## Reward rule change
 
@@ -45,4 +44,4 @@ farming of first-clear rewards as required by the specification.
 
 Follow [database-setup.md](database-setup.md) to start the local service, verify
 the server/port, run the numbered scripts, inspect tables, set credentials, and
-confirm a saved stage, purchase, and boss defeat after restart.
+confirm saved player and tutorial progress after restart.

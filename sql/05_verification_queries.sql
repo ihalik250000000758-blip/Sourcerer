@@ -1,42 +1,70 @@
 USE sourcerer_crusade;
 
--- Player account and character statistics.
-SELECT player_id, player_name, xp, character_level, coins, bosses_defeated, tutorial_done
-FROM players
-ORDER BY player_id;
+-- Overall player view. Current campaign level is derived by Progress.currentLevel().
+-- A player with no saved inventory or progress still appears with zero quantities/stars.
+SELECT p.player_id, p.player_name,
+       COALESCE((SELECT MIN(pp.stage_id) FROM player_progress pp
+                 WHERE pp.player_id = p.player_id AND pp.completed = FALSE),
+                (SELECT MAX(s.stage_id) FROM stages s)) AS current_level,
+       p.character_level AS player_level, p.xp,
+       50 + 25 * (p.character_level - 1) AS xp_to_next_level,
+       p.coins,
+       COALESCE((SELECT i.quantity FROM inventory i WHERE i.player_id = p.player_id
+                 AND i.potion_code = 'HEALING'), 0) AS healing_potions,
+       COALESCE((SELECT i.quantity FROM inventory i WHERE i.player_id = p.player_id
+                 AND i.potion_code = 'MANA'), 0) AS mana_potions,
+       COALESCE((SELECT SUM(pp.stars) FROM player_progress pp WHERE pp.player_id = p.player_id), 0)
+           AS campaign_stars_out_of_21,
+       COALESCE((SELECT SUM(pp.completed) FROM player_progress pp WHERE pp.player_id = p.player_id), 0)
+           AS campaign_levels_completed,
+       COALESCE((SELECT SUM(tp.stars) FROM tutorial_progress tp WHERE tp.player_id = p.player_id), 0)
+           AS tutorial_minigame_stars_out_of_18,
+       COALESCE((SELECT SUM(tp.completed) FROM tutorial_progress tp WHERE tp.player_id = p.player_id), 0)
+           AS tutorial_minigames_completed
+FROM players p
+ORDER BY p.player_id;
 
--- Inventory by player (Potion enum codes currently used by the project: HEALING, MANA).
+-- Main levels and each player's completion, unlock state and stars.
+SELECT stage_id, stage_name, description FROM stages ORDER BY stage_id;
+SELECT s.stage_id, s.stage_name, p.player_name,
+       COALESCE(pp.unlocked, s.stage_id = 1) AS unlocked,
+       COALESCE(pp.completed, FALSE) AS completed,
+       COALESCE(pp.stars, 0) AS stars, pp.completed_at
+FROM stages s
+CROSS JOIN players p
+LEFT JOIN player_progress pp ON pp.player_id = p.player_id AND pp.stage_id = s.stage_id
+ORDER BY p.player_name, s.stage_id;
+
+-- Tutorial minigame stars, separate from the non-persistent first-run tutorial flag.
+SELECT tutorial_stage_id, title, mechanic FROM tutorial_stages ORDER BY tutorial_stage_id;
+SELECT ts.tutorial_stage_id, ts.title, p.player_name,
+       COALESCE(tp.unlocked, ts.tutorial_stage_id = 1) AS unlocked,
+       COALESCE(tp.completed, FALSE) AS completed,
+       COALESCE(tp.stars, 0) AS stars, tp.completed_at
+FROM tutorial_stages ts
+CROSS JOIN players p
+LEFT JOIN tutorial_progress tp
+  ON tp.player_id = p.player_id AND tp.tutorial_stage_id = ts.tutorial_stage_id
+ORDER BY p.player_name, ts.tutorial_stage_id;
+
+-- Potion inventory. Empty inventory is represented as zero rows until a save writes quantities.
 SELECT p.player_name, i.potion_code, i.quantity
-FROM inventory AS i
-JOIN players AS p ON p.player_id = i.player_id
+FROM players p
+LEFT JOIN inventory i ON i.player_id = p.player_id
 ORDER BY p.player_name, i.potion_code;
 
--- Stage definitions and boss markers (expect 100 rows and 10 bosses).
-SELECT stage_type, COUNT(*) AS stage_count
-FROM stages
-GROUP BY stage_type
-ORDER BY stage_type;
-SELECT stage_id, stage_name, stage_type FROM stages ORDER BY stage_id;
+-- This build has no campaign stages marked as bosses in LevelBank; there is no boss-defeat data.
+SELECT 'No boss encounters are defined in the current seven-level campaign.' AS boss_progress;
 
--- Per-player unlocked/completed progress.
-SELECT p.player_name, pp.stage_id, pp.unlocked, pp.completed, pp.stars, pp.completed_at
-FROM player_progress AS pp
-JOIN players AS p ON p.player_id = pp.player_id
-ORDER BY p.player_name, pp.stage_id;
+-- List all tables in this schema.
+SELECT TABLE_NAME
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+ORDER BY TABLE_NAME;
 
--- Individual boss defeats and totals recorded for each player.
-SELECT p.player_name, bd.stage_id, bd.defeated_at
-FROM boss_defeats AS bd
-JOIN players AS p ON p.player_id = bd.player_id
-ORDER BY p.player_name, bd.stage_id;
-SELECT p.player_name, p.bosses_defeated, COUNT(bd.stage_id) AS recorded_boss_defeats
-FROM players AS p
-LEFT JOIN boss_defeats AS bd ON bd.player_id = p.player_id
-GROUP BY p.player_id, p.player_name, p.bosses_defeated
-ORDER BY p.player_name;
-
--- Idempotency/reward/purchase audit history.
-SELECT p.player_name, oh.operation_id, oh.operation_type, oh.reference_id, oh.created_at, oh.details
-FROM operation_history AS oh
-JOIN players AS p ON p.player_id = oh.player_id
-ORDER BY oh.created_at DESC;
+-- Inspect columns, types, nullability, keys and defaults for all tables.
+SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,
+       COLUMN_KEY, COLUMN_DEFAULT, EXTRA
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+ORDER BY TABLE_NAME, ORDINAL_POSITION;

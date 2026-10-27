@@ -4,7 +4,11 @@ package sourcerer.model;
 public class NullPointer extends Bug {
 
     public NullPointer() {
-        super("Null Pointer", 50, 10, "null");
+        this(1);
+    }
+
+    public NullPointer(int campaignLevel) {
+        super("Null Pointer", 50 + Math.max(0, campaignLevel - 1) * 25, 10, "null");
     }
 
     @Override

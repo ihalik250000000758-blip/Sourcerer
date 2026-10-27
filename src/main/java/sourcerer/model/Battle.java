@@ -13,6 +13,8 @@ public class Battle {
     public enum Outcome { CONTINUE, VICTORY, DEFEAT }
 
     public static final int SKILL_COST = 15;
+    public static final int BASIC_ATTACK_COST = 2;
+    public static final int ZERO_MANA_HP_COST = 2;
     public static final int PUZZLE_XP = 10;
     public static final int VICTORY_XP = 25;
 
@@ -26,6 +28,8 @@ public class Battle {
     private boolean lastCorrect;
     private int lastDamageDealt;
     private int lastDamageTaken;
+    private Outcome terminalOutcome;
+    private boolean levelRewardGranted;
     private final List<String> log = new ArrayList<>();
 
     public Battle() {
@@ -46,6 +50,8 @@ public class Battle {
         puzzleIndex = 0;
         mistakes = 0;
         strikeArmed = false;
+        terminalOutcome = null;
+        levelRewardGranted = false;
         bug = lv.createBug();
         puzzle = lv.getPuzzles().get(0);
         log('*', "A wild " + bug.getName() + " appears!");
@@ -55,9 +61,19 @@ public class Battle {
 
     /** Both the arranged tiles and the typed text must match the puzzle's sample answer. */
     public Outcome submit(String assembled, String typed) {
+        if (terminalOutcome != null) return terminalOutcome;
         lastCorrect = false;
         lastDamageDealt = 0;
         lastDamageTaken = 0;
+        boolean noManaAtSubmission = player.getMp() == 0;
+        player.drainMana(BASIC_ATTACK_COST);
+        if (noManaAtSubmission) {
+            int hpBeforePenalty = player.getHp();
+            player.drainHp(ZERO_MANA_HP_COST);
+            lastDamageTaken = hpBeforePenalty - player.getHp();
+            log('-', "No MP! You lose " + ZERO_MANA_HP_COST + " HP.");
+            if (player.isDefeated()) return finishDefeat();
+        }
 
         if (!puzzle.matches(assembled)) {
             log('-', "Those tiles don't form the right statement!");
@@ -76,21 +92,22 @@ public class Battle {
             strikeArmed = false;
             log('*', "Syntax Strike doubles your damage!");
         }
-        damage = last ? bug.getHp() : Math.min(damage, Math.max(1, bug.getHp() - 1));
+        damage = last ? bug.getHp() : Math.min(damage, bug.getHp());
         bug.takeDamage(damage);
         lastDamageDealt = damage;
         log('+', "Correct! You hit " + bug.getName() + " for " + damage + " damage.");
 
         boolean levelUp = player.gainXp(PUZZLE_XP);
         log('*', "+" + PUZZLE_XP + " XP");
-        if (last) {
+        if (last || bug.isDefeated()) {
             log('+', bug.getName() + " is squashed!");
             levelUp |= player.gainXp(VICTORY_XP);
             log('*', "+" + VICTORY_XP + " XP victory bonus");
             if (levelUp) {
                 log('*', "Level up! You are now level " + player.getLevel() + ".");
             }
-            return Outcome.VICTORY;
+            terminalOutcome = Outcome.VICTORY;
+            return terminalOutcome;
         }
         if (levelUp) {
             log('*', "Level up! You are now level " + player.getLevel() + ".");
@@ -101,18 +118,29 @@ public class Battle {
     }
 
     private Outcome retaliate() {
+        if (terminalOutcome != null) return terminalOutcome;
+        if (bug.isDefeated()) {
+            terminalOutcome = Outcome.VICTORY;
+            return terminalOutcome;
+        }
         mistakes++;
         int before = player.getHp();
         log('-', bug.attack(player));
-        lastDamageTaken = before - player.getHp();
+        lastDamageTaken += before - player.getHp();
         if (player.isDefeated()) {
-            log('-', "You have been defeated...");
-            return Outcome.DEFEAT;
+            return finishDefeat();
         }
         return Outcome.CONTINUE;
     }
 
+    private Outcome finishDefeat() {
+        log('-', "You have been defeated...");
+        terminalOutcome = Outcome.DEFEAT;
+        return terminalOutcome;
+    }
+
     public void usePotion(Potion type) {
+        if (terminalOutcome != null) return;
         if (player.getPotionCount(type) <= 0) {
             log('-', "No " + type.getLabel() + "s left!");
         } else if (player.usePotion(type)) {
@@ -124,6 +152,7 @@ public class Battle {
 
     /** Placeholder skill: arms "Syntax Strike" so the next correct answer deals double damage. */
     public void useSkill() {
+        if (terminalOutcome != null) return;
         if (strikeArmed) {
             log('-', "Syntax Strike is already ready.");
         } else if (!player.spendMana(SKILL_COST)) {
@@ -136,7 +165,9 @@ public class Battle {
 
     /** Called by the UI after a level victory: potion reward. */
     public void grantLevelReward() {
+        if (terminalOutcome != Outcome.VICTORY || levelRewardGranted) return;
         player.addPotion(Potion.HEALING);
+        levelRewardGranted = true;
         log('+', "Reward: +1 Healing Potion");
     }
 

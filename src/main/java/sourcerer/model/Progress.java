@@ -8,7 +8,6 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.Arrays;
 import sourcerer.util.JdbcGameStore;
 import java.util.Properties;
 
@@ -24,8 +23,8 @@ public class Progress {
     private int savedXp;
     private int savedXpToNext = 50;
     private int savedCoins;
-    private int savedHealing = 3;
-    private int savedMana = 2;
+    private int savedHealing;
+    private int savedMana;
 
     public Progress() {
         this(new File("sourcerer_progress.properties"), isDatabaseConfigured());
@@ -131,17 +130,16 @@ public class Progress {
     public int[] getBossStagesSnapshot() { return bossesDefeated.stream().mapToInt(Integer::intValue).sorted().toArray(); }
 
     /** Replaces the in-memory state with a verified record loaded from JDBC. */
-    public void restoreDatabaseState(int level, int xp, int xpToNext, int coins, boolean tutorialComplete,
-            int healing, int mana, int[] databaseStars, int[] databaseBosses) {
+    public void restoreDatabaseState(int level, int xp, int xpToNext, int coins,
+            int healing, int mana, int[] databaseStars) {
         if (databaseStars.length != stars.length) throw new IllegalArgumentException("Unexpected stage snapshot size");
         System.arraycopy(databaseStars, 0, stars, 0, stars.length);
         bossesDefeated.clear();
-        Arrays.stream(databaseBosses).forEach(bossesDefeated::add);
         savedLevel = level;
         savedXp = xp;
         savedXpToNext = xpToNext;
         savedCoins = coins;
-        tutorialDone = tutorialComplete;
+        tutorialDone = false;
         savedHealing = healing;
         savedMana = mana;
         if (savedLevel < 1 || savedXp < 0 || savedXpToNext < 1 || savedXp >= savedXpToNext
@@ -201,7 +199,6 @@ public class Progress {
         Properties p = new Properties();
         try (FileInputStream in = new FileInputStream(file)) {
             p.load(in);
-            tutorialDone = Boolean.parseBoolean(p.getProperty("tutorialDone", "false"));
             for (int i = 1; i <= LevelBank.count(); i++) {
                 stars[i] = Integer.parseInt(p.getProperty("stars." + i, "0"));
                 if (stars[i] < 0 || stars[i] > 3) {
@@ -212,8 +209,8 @@ public class Progress {
             savedXp = Integer.parseInt(p.getProperty("player.xp", "0"));
             savedXpToNext = Integer.parseInt(p.getProperty("player.xpToNext", "50"));
             savedCoins = Integer.parseInt(p.getProperty("player.coins", "0"));
-            savedHealing = Integer.parseInt(p.getProperty("inventory.HEALING", "3"));
-            savedMana = Integer.parseInt(p.getProperty("inventory.MANA", "2"));
+            savedHealing = Integer.parseInt(p.getProperty("inventory.HEALING", "0"));
+            savedMana = Integer.parseInt(p.getProperty("inventory.MANA", "0"));
             for (int i = 10; i <= LevelBank.count(); i += 10) {
                 if (Boolean.parseBoolean(p.getProperty("boss." + i, "false"))) bossesDefeated.add(i);
             }
@@ -237,7 +234,6 @@ public class Progress {
             }
         }
         Properties p = new Properties();
-        p.setProperty("tutorialDone", String.valueOf(tutorialDone));
         for (int i = 1; i <= LevelBank.count(); i++) {
             p.setProperty("stars." + i, String.valueOf(stars[i]));
         }

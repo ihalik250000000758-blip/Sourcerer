@@ -4,9 +4,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import sourcerer.model.LevelBank;
 import sourcerer.model.Potion;
 import sourcerer.model.Progress;
-import sourcerer.model.LevelBank;
 
 /** JDBC persistence for the single local campaign profile used by the current game. */
 public final class JdbcGameStore {
@@ -19,39 +19,33 @@ public final class JdbcGameStore {
         try (Connection connection = DatabaseConnection.getConnection()) {
             connection.setAutoCommit(false);
             try {
-                long playerId;
                 boolean created;
                 try (PreparedStatement insert = connection.prepareStatement(
-                        "INSERT IGNORE INTO players (player_name, xp, character_level, coins) VALUES (?, 0, 1, 0)")) {
+                        "INSERT IGNORE INTO players (player_name) VALUES (?)")) {
                     insert.setString(1, PLAYER_NAME);
                     created = insert.executeUpdate() == 1;
                 }
+                if (created) {
+                    connection.rollback();
+                    return false;
+                }
                 try (PreparedStatement select = connection.prepareStatement(
-                        "SELECT player_id, xp, character_level, coins, tutorial_done FROM players WHERE player_name = ? FOR UPDATE")) {
+                        "SELECT player_id, xp, character_level, coins FROM players WHERE player_name = ? FOR UPDATE")) {
                     select.setString(1, PLAYER_NAME);
                     try (ResultSet rows = select.executeQuery()) {
-                        if (!rows.next()) throw new SQLException("Could not create or load the local player profile");
-                        playerId = rows.getLong("player_id");
-                        if (created) {
-                            // Validate/import any local save before creating the DB profile.
-                            connection.rollback();
-                            return false;
-                        }
+                        if (!rows.next()) throw new SQLException("Could not load the local player profile");
+                        long playerId = rows.getLong("player_id");
                         int level = rows.getInt("character_level");
                         int xp = rows.getInt("xp");
-                        int xpToNext = 50 + 25 * (level - 1);
                         int coins = rows.getInt("coins");
-                        boolean tutorialDone = rows.getBoolean("tutorial_done");
-
-                        int[] inventory = loadInventory(connection, playerId, created);
-                        int[] stars = loadProgress(connection, playerId, created);
-                        int[] bosses = loadBosses(connection, playerId);
-                        progress.restoreDatabaseState(level, xp, xpToNext, coins, tutorialDone,
-                                inventory[0], inventory[1], stars, bosses);
+                        int[] inventory = loadInventory(connection, playerId);
+                        int[] stars = loadProgress(connection, playerId);
+                        progress.restoreDatabaseState(level, xp, 50 + 25 * (level - 1), coins,
+                                inventory[0], inventory[1], stars);
                     }
                 }
                 connection.commit();
-                return !created;
+                return true;
             } catch (SQLException | RuntimeException failure) {
                 connection.rollback();
                 throw failure;
@@ -61,92 +55,51 @@ public final class JdbcGameStore {
         }
     }
 
-    private static int[] loadInventory(Connection connection, long playerId, boolean created) throws SQLException {
-        int healing = created ? 3 : 0;
-        int mana = created ? 2 : 0;
-        try (PreparedStatement insert = connection.prepareStatement(
-                "INSERT IGNORE INTO inventory (player_id, potion_code, quantity) VALUES (?, ?, ?)")) {
-            insert.setLong(1, playerId);
-            insert.setString(2, Potion.HEALING.name());
-            insert.setInt(3, healing);
-            insert.executeUpdate();
-            insert.setLong(1, playerId);
-            insert.setString(2, Potion.MANA.name());
-            insert.setInt(3, mana);
-            insert.executeUpdate();
-        }
+    private static int[] loadInventory(Connection connection, long playerId) throws SQLException {
+        int[] quantities = new int[2];
         try (PreparedStatement query = connection.prepareStatement(
                 "SELECT potion_code, quantity FROM inventory WHERE player_id = ?")) {
             query.setLong(1, playerId);
             try (ResultSet rows = query.executeQuery()) {
                 while (rows.next()) {
-                    if (Potion.HEALING.name().equals(rows.getString(1))) healing = rows.getInt(2);
-                    if (Potion.MANA.name().equals(rows.getString(1))) mana = rows.getInt(2);
+                    if (Potion.HEALING.name().equals(rows.getString(1))) quantities[0] = rows.getInt(2);
+                    if (Potion.MANA.name().equals(rows.getString(1))) quantities[1] = rows.getInt(2);
                 }
             }
         }
-        return new int[]{healing, mana};
+        return quantities;
     }
 
-    private static int[] loadProgress(Connection connection, long playerId, boolean created) throws SQLException {
+    private static int[] loadProgress(Connection connection, long playerId) throws SQLException {
         int[] stars = new int[LevelBank.count() + 2];
-        if (created) {
-            try (PreparedStatement insert = connection.prepareStatement(
-                    "INSERT IGNORE INTO player_progress (player_id, stage_id, unlocked, completed, stars) VALUES (?, 1, TRUE, FALSE, 0)")) {
-                insert.setLong(1, playerId);
-                insert.executeUpdate();
-            }
-        }
         try (PreparedStatement query = connection.prepareStatement(
                 "SELECT stage_id, stars FROM player_progress WHERE player_id = ?")) {
             query.setLong(1, playerId);
             try (ResultSet rows = query.executeQuery()) {
                 while (rows.next()) {
                     int id = rows.getInt(1);
-                    if (id > 0 && id < stars.length) stars[id] = rows.getInt(2);
+                    if (id > 0 && id <= LevelBank.count()) stars[id] = rows.getInt(2);
                 }
             }
         }
         return stars;
     }
 
-    private static int[] loadBosses(Connection connection, long playerId) throws SQLException {
-        int[] result = new int[10];
-        int count = 0;
-        try (PreparedStatement query = connection.prepareStatement(
-                "SELECT stage_id FROM boss_defeats WHERE player_id = ?")) {
-            query.setLong(1, playerId);
-            try (ResultSet rows = query.executeQuery()) {
-                while (rows.next()) {
-                    int id = rows.getInt(1);
-                    if (id >= 10 && id <= 100 && id % 10 == 0) result[count++] = id;
-                }
-            }
-        }
-        int[] trimmed = new int[count];
-        System.arraycopy(result, 0, trimmed, 0, count);
-        return trimmed;
-    }
-
-    /** Persists player, inventory, stage progress and boss records in one transaction. */
+    /** Persists player, inventory and the seven campaign levels in one transaction. */
     public static void save(Progress progress) throws SQLException {
         try (Connection connection = DatabaseConnection.getConnection()) {
             connection.setAutoCommit(false);
             try {
-                long playerId;
                 try (PreparedStatement upsert = connection.prepareStatement(
-                        "INSERT INTO players (player_name, xp, character_level, coins, bosses_defeated, tutorial_done) "
-                        + "VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE xp=VALUES(xp), "
-                        + "character_level=VALUES(character_level), coins=VALUES(coins), "
-                        + "bosses_defeated=VALUES(bosses_defeated), tutorial_done=VALUES(tutorial_done)")) {
+                        "INSERT INTO players (player_name, xp, character_level, coins) VALUES (?, ?, ?, ?) "
+                        + "ON DUPLICATE KEY UPDATE xp=VALUES(xp), character_level=VALUES(character_level), coins=VALUES(coins)")) {
                     upsert.setString(1, PLAYER_NAME);
                     upsert.setInt(2, progress.getSavedXp());
                     upsert.setInt(3, progress.getSavedLevel());
                     upsert.setInt(4, progress.getSavedCoins());
-                    upsert.setInt(5, progress.getBossesDefeated());
-                    upsert.setBoolean(6, progress.isTutorialDone());
                     upsert.executeUpdate();
                 }
+                long playerId;
                 try (PreparedStatement query = connection.prepareStatement(
                         "SELECT player_id FROM players WHERE player_name = ?")) {
                     query.setString(1, PLAYER_NAME);
@@ -158,14 +111,6 @@ public final class JdbcGameStore {
                 saveInventory(connection, playerId, Potion.HEALING, progress.getSavedHealing());
                 saveInventory(connection, playerId, Potion.MANA, progress.getSavedMana());
                 saveStageProgress(connection, playerId, progress);
-                for (int boss : progress.getBossStagesSnapshot()) {
-                    try (PreparedStatement insert = connection.prepareStatement(
-                            "INSERT IGNORE INTO boss_defeats (player_id, stage_id, stage_type) VALUES (?, ?, 'BOSS')")) {
-                        insert.setLong(1, playerId);
-                        insert.setInt(2, boss);
-                        insert.executeUpdate();
-                    }
-                }
                 connection.commit();
             } catch (SQLException | RuntimeException failure) {
                 connection.rollback();
@@ -195,18 +140,76 @@ public final class JdbcGameStore {
                 + "VALUES (?, ?, ?, ?, ?, IF(?, CURRENT_TIMESTAMP, NULL)) ON DUPLICATE KEY UPDATE "
                 + "unlocked=VALUES(unlocked), completed=VALUES(completed), stars=VALUES(stars), "
                 + "completed_at=IF(VALUES(completed), COALESCE(completed_at, CURRENT_TIMESTAMP), NULL)")) {
-            for (int id = 1; id <= 100; id++) {
-                int stars = progress.getStars(id);
-                boolean completed = stars > 0;
+            for (int id = 1; id <= LevelBank.count(); id++) {
+                boolean completed = progress.getStars(id) > 0;
                 upsert.setLong(1, playerId);
                 upsert.setInt(2, id);
-                upsert.setBoolean(3, id == 1 || progress.isCompleted(id - 1));
+                upsert.setBoolean(3, progress.isUnlocked(id));
                 upsert.setBoolean(4, completed);
-                upsert.setInt(5, stars);
+                upsert.setInt(5, progress.getStars(id));
                 upsert.setBoolean(6, completed);
                 upsert.addBatch();
             }
             upsert.executeBatch();
+        }
+    }
+
+    /** Reads persisted stars for the six tutorial minigames. */
+    public static int[] loadTutorialStars(int count) throws SQLException {
+        int[] stars = new int[count];
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement query = connection.prepareStatement(
+                     "SELECT tp.tutorial_stage_id, tp.stars FROM tutorial_progress tp "
+                     + "JOIN players p ON p.player_id = tp.player_id WHERE p.player_name = ?")) {
+            query.setString(1, PLAYER_NAME);
+            try (ResultSet rows = query.executeQuery()) {
+                while (rows.next()) {
+                    int id = rows.getInt(1) - 1;
+                    if (id >= 0 && id < count) stars[id] = rows.getInt(2);
+                }
+            }
+        }
+        return stars;
+    }
+
+    /** Saves tutorial minigame stars separately from the transient first-run tutorial flag. */
+    public static void saveTutorialStars(int[] stars) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                long playerId;
+                try (PreparedStatement query = connection.prepareStatement(
+                        "SELECT player_id FROM players WHERE player_name = ?")) {
+                    query.setString(1, PLAYER_NAME);
+                    try (ResultSet rows = query.executeQuery()) {
+                        if (!rows.next()) throw new SQLException("Player profile must exist before tutorial progress");
+                        playerId = rows.getLong(1);
+                    }
+                }
+                try (PreparedStatement upsert = connection.prepareStatement(
+                        "INSERT INTO tutorial_progress (player_id, tutorial_stage_id, unlocked, completed, stars, completed_at) "
+                        + "VALUES (?, ?, ?, ?, ?, IF(?, CURRENT_TIMESTAMP, NULL)) ON DUPLICATE KEY UPDATE "
+                        + "unlocked=VALUES(unlocked), completed=VALUES(completed), stars=VALUES(stars), "
+                        + "completed_at=IF(VALUES(completed), COALESCE(completed_at, CURRENT_TIMESTAMP), NULL)")) {
+                    for (int i = 0; i < stars.length; i++) {
+                        boolean completed = stars[i] > 0;
+                        upsert.setLong(1, playerId);
+                        upsert.setInt(2, i + 1);
+                        upsert.setBoolean(3, i == 0 || stars[i - 1] > 0);
+                        upsert.setBoolean(4, completed);
+                        upsert.setInt(5, stars[i]);
+                        upsert.setBoolean(6, completed);
+                        upsert.addBatch();
+                    }
+                    upsert.executeBatch();
+                }
+                connection.commit();
+            } catch (SQLException | RuntimeException failure) {
+                connection.rollback();
+                throw failure;
+            } finally {
+                connection.setAutoCommit(true);
+            }
         }
     }
 }
