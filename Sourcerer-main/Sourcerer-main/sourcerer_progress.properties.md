@@ -1,0 +1,13 @@
+stars.1=3
+stars.2=3
+stars.3=3
+stars.4=3
+stars.5=3
+stars.6=3
+stars.7=0
+player.level=1
+player.xp=0
+player.xpToNext=50
+player.coins=0
+inventory.HEALING=0
+inventory.MANA=0
